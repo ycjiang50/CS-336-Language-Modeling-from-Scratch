@@ -1,0 +1,76 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cs336-training-job
+spec:
+  backoffLimit: 0
+  template:
+    spec:
+      containers:
+      - name: training
+        # Replace with your built image URI (e.g., gcr.io/your-project/cs336-basics:latest)
+        image: gcr.io/YOUR_PROJECT_ID/cs336-basics:latest
+        imagePullPolicy: Always
+        
+        # Command to download data and run training
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          echo "Starting training job..."
+          
+          # 1. Download data from GCS
+          # We use 'gcloud storage' or 'gsutil' if available, or python.
+          # Since we didn't install gcloud in Dockerfile, let's use a python one-liner or install it.
+          # Better: Install google-cloud-storage in the image or use a pre-download init container.
+          # For this example, we'll assume the user adds 'google-cloud-storage' to pyproject.toml
+          # OR we can just use curl if the bucket is public, but it's likely private.
+          
+          # Let's assume we install the gcloud CLI or use python. 
+          # Here is a python snippet to download if google-cloud-storage is installed:
+          # python -c "from google.cloud import storage; ..."
+          
+          # For now, let's assume the user will mount data or use a GCS FUSE driver.
+          # BUT, the user specifically asked "i can upload ... to gcs bucket".
+          # So let's add a placeholder for downloading.
+          
+          echo "Downloading data from GCS..."
+          # pip install google-cloud-storage # Uncomment if not in pyproject.toml
+          # python scripts/download_from_gcs.py --bucket YOUR_BUCKET --dest /data
+          
+          # 2. Run Training
+          python cs336_basics/train.py \
+            --data_dir /data \
+            --save_ckp_path /data/checkpoints \
+            --d_model 256 \
+            --num_layers 4 \
+            --batch_size 32 \
+            --device cuda
+            
+        resources:
+          limits:
+            nvidia.com/gpu: 1  # Request 1 GPU
+        
+        volumeMounts:
+        - name: data-volume
+          mountPath: /data
+        - name: dshm
+          mountPath: /dev/shm
+          
+        env:
+        - name: WANDB_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: wandb-secret
+              key: api-key
+              optional: true
+              
+      volumes:
+      - name: data-volume
+        emptyDir: {}
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          
+      restartPolicy: Never
+      nodeSelector:
+        cloud.google.com/gke-accelerator: nvidia-l4  # Optional: specify GPU type

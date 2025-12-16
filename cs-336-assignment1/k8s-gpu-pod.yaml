@@ -1,0 +1,41 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: cs336-training
+spec:
+  restartPolicy: Never
+  containers:
+  - name: trainer
+    image: your-registry/cs336-assignment:latest
+    command: ["/bin/bash", "-c"]
+    args:
+      - |
+        # Run tests first
+        uv run pytest
+        
+        # Train BPE tokenizer
+        uv run python train_bpe.py
+        
+        # Train transformer model
+        uv run python train_model.py
+    resources:
+      limits:
+        nvidia.com/gpu: 1  # Request 1 GPU
+        memory: "32Gi"
+        cpu: "8"
+      requests:
+        nvidia.com/gpu: 1
+        memory: "16Gi"
+        cpu: "4"
+    volumeMounts:
+    - name: data
+      mountPath: /workspace/data
+    - name: checkpoints
+      mountPath: /workspace/checkpoints
+  volumes:
+  - name: data
+    persistentVolumeClaim:
+      claimName: cs336-data-pvc
+  - name: checkpoints
+    persistentVolumeClaim:
+      claimName: cs336-checkpoints-pvc
