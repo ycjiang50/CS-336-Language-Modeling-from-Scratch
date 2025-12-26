@@ -14,8 +14,8 @@ from torch import Tensor
 from jaxtyping import Float, Bool, Int
 
 try:
-    import nvtx
-except ImportError:
+    import torch.cuda.nvtx as nvtx
+except (ImportError, AttributeError):
     # If NVTX is not available, create a dummy context manager
     class DummyNVTX:
         @staticmethod
