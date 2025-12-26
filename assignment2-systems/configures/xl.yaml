@@ -12,5 +12,5 @@ batch_size: 32
 warmup_steps: 5
 benchmark_steps: 20
 forward_only: false
-device: "cpu" 
+device: "cuda" 
 autocast: false
