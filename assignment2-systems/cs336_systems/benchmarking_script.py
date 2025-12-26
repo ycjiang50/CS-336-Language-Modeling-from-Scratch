@@ -99,6 +99,11 @@ def benchmark_model(
                     if device == "cuda":
                         torch.cuda.synchronize()
     
+    # Start recording memory history AFTER warm-up
+    if device == "cuda":
+        print("Starting memory profiling...")
+        torch.cuda.memory._record_memory_history(max_entries=1000000)
+    
     # Benchmark - use NVTX to mark the actual benchmarking region
     print ("benchmark:")
     forward_times = []
@@ -160,6 +165,13 @@ def benchmark_model(
                         optimizer.step()
                     torch.cuda.synchronize()
                 memory_backward = torch.cuda.max_memory_allocated()/(1024**3)
+    
+    # Save memory snapshot and stop recording
+    if device == "cuda":
+        print("Saving memory snapshot...")
+        torch.cuda.memory._dump_snapshot("memory_snapshot.pickle")
+        torch.cuda.memory._record_memory_history(enabled=None)
+        print("Memory snapshot saved to: memory_snapshot.pickle")
     
     avg_forward_time = sum(forward_times) / len(forward_times)
     avg_backward_time = sum(backward_times) / len(backward_times) if not forward_only else 0.0
