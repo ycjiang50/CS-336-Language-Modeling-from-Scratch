@@ -13,6 +13,20 @@ import torch.nn as nn
 from torch import Tensor
 from jaxtyping import Float, Bool, Int
 
+try:
+    import nvtx
+except ImportError:
+    # If NVTX is not available, create a dummy context manager
+    class DummyNVTX:
+        @staticmethod
+        def range(name):
+            class DummyContextManager:
+                def __enter__(self):
+                    return self
+                def __exit__(self, *args):
+                    pass
+            return DummyContextManager()
+    nvtx = DummyNVTX()
 
 from .nn_utils import softmax
 
@@ -94,17 +108,18 @@ class RMSNorm(nn.Module):
         Returns:
             FloatTensor of same shape as input
         """
-        # NOTE: in practice, many implementations will
-        # manually upcast the input to fp32 here to prevent overflow when you
-        # square the input.
-        # https://github.com/pytorch/pytorch/issues/66707
-        in_dtype = x.dtype
+        with nvtx.range("RMSNorm"):
+            # NOTE: in practice, many implementations will
+            # manually upcast the input to fp32 here to prevent overflow when you
+            # square the input.
+            # https://github.com/pytorch/pytorch/issues/66707
+            in_dtype = x.dtype
 
-        x = x.to(torch.float32)
-        rms = torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
-        x = x * rms
+            x = x.to(torch.float32)
+            rms = torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
+            x = x * rms
 
-        return (self.weight * x).to(in_dtype)
+            return (self.weight * x).to(in_dtype)
     
     def extra_repr(self):
         return f"hidden_size={self.weight.shape[0]}, eps={self.eps}"
@@ -132,19 +147,20 @@ class RotaryEmbedding(nn.Module):
         return torch.stack((cos, sin))
 
     def forward(self, x: Float[Tensor, " ... seq d"], pos_ids: Int[Tensor, " ... seq"]) -> Float[Tensor, " ... seq d"]:
-        x1, x2 = rearrange(x, '... (half_d xy) -> xy ... half_d', xy=2)
+        with nvtx.range("RotaryEmbedding"):
+            x1, x2 = rearrange(x, '... (half_d xy) -> xy ... half_d', xy=2)
 
-        # Standard
-        # cos, sin = self._freq_cis_cache[:, pos_ids, :]
+            # Standard
+            # cos, sin = self._freq_cis_cache[:, pos_ids, :]
 
-        # einx
-        cos, sin = einx.get_at('cos_sin [pos] half_dim, ... -> cos_sin ... half_dim', self._freq_cis_cache, pos_ids)
+            # einx
+            cos, sin = einx.get_at('cos_sin [pos] half_dim, ... -> cos_sin ... half_dim', self._freq_cis_cache, pos_ids)
 
-        # 2D rotation matrix applied to pairs in x
-        x1_rot = cos * x1 - sin * x2
-        x2_rot = sin * x1 + cos * x2
-        result = einx.rearrange('... x_half, ... x_half -> ... (x_half (1 + 1))', x1_rot, x2_rot).contiguous()
-        return result
+            # 2D rotation matrix applied to pairs in x
+            x1_rot = cos * x1 - sin * x2
+            x2_rot = sin * x1 + cos * x2
+            result = einx.rearrange('... x_half, ... x_half -> ... (x_half (1 + 1))', x1_rot, x2_rot).contiguous()
+            return result
     
     def extra_repr(self):
         return f"context_length={self._freq_cis_cache.shape[0]}, dim/2={self._freq_cis_cache.shape[1]}"
@@ -237,20 +253,25 @@ class BasicsTransformerLM(nn.Module):
             (batch size, sequence_length, vocab_size) with the predicted unnormalized next-word
             distribution for each token.
         """
-        _, sequence_length = x.size()
+        with nvtx.range("BasicsTransformerLM.forward"):
+            _, sequence_length = x.size()
 
-        # (batch size, sequence_length, d_model)
-        x = self.token_embeddings(x)
-
-        for layer in self.layers:
             # (batch size, sequence_length, d_model)
-            x = layer(x)
+            with nvtx.range("Embedding"):
+                x = self.token_embeddings(x)
 
-        # (batch size, sequence_length, d_model)
-        x = self.ln_final(x)
+            for i, layer in enumerate(self.layers):
+                # (batch size, sequence_length, d_model)
+                with nvtx.range(f"TransformerBlock_{i}"):
+                    x = layer(x)
 
-        # (batch size, sequence_length, vocab_size)
-        return self.lm_head(x)
+            # (batch size, sequence_length, d_model)
+            with nvtx.range("FinalNorm"):
+                x = self.ln_final(x)
+
+            # (batch size, sequence_length, vocab_size)
+            with nvtx.range("LMHead"):
+                return self.lm_head(x)
 
     @torch.no_grad()
     def generate(
@@ -377,12 +398,14 @@ class TransformerBlock(nn.Module):
         # NOTE: this is a pre-norm Transformer, and differs from the original
         # description in the paper.
         # Apply the multi-head self-attention sublayer
-        x_attn = self.attn(self.ln1(x))
-        attn_sublayer_output = x + x_attn
+        with nvtx.range("Attention"):
+            x_attn = self.attn(self.ln1(x))
+            attn_sublayer_output = x + x_attn
 
         # Apply the feed-forward sublayer
-        x_ffn = self.ffn(self.ln2(attn_sublayer_output))
-        ffn_sublayer_output = attn_sublayer_output + x_ffn
+        with nvtx.range("FFN"):
+            x_ffn = self.ffn(self.ln2(attn_sublayer_output))
+            ffn_sublayer_output = attn_sublayer_output + x_ffn
         return ffn_sublayer_output
 
 
@@ -394,7 +417,8 @@ class SwiGLU(nn.Module):
         self.w3 = Linear(d_model, d_ff)
 
     def forward(self, x):
-        return self.w2(silu(self.w1(x)) * self.w3(x))
+        with nvtx.range("SwiGLU"):
+            return self.w2(silu(self.w1(x)) * self.w3(x))
 
 
 def scaled_dot_product_attention(
@@ -484,44 +508,51 @@ class CausalMultiHeadSelfAttention(nn.Module):
         Returns:
             Self-attention outputs.
         """
-        *b, sequence_length, d_model = x.size()
-        assert d_model == self.d_model
+        with nvtx.range("MultiHeadAttention"):
+            *b, sequence_length, d_model = x.size()
+            assert d_model == self.d_model
 
-        Q = self.q_proj(x)
-        K = self.k_proj(x)
-        V = self.v_proj(x)
+            with nvtx.range("QKV_Projection"):
+                Q = self.q_proj(x)
+                K = self.k_proj(x)
+                V = self.v_proj(x)
 
-        # Take apart each head from the embedding dimension of Q, K, V to shape (..., num_heads, seq_len, d_k).
-        Q, K, V = (
-            rearrange(X, "... seq (heads d) -> ... heads seq d", heads=self.num_heads)
-            for X in (Q, K, V)
-        )  # fmt: skip
+            # Take apart each head from the embedding dimension of Q, K, V to shape (..., num_heads, seq_len, d_k).
+            Q, K, V = (
+                rearrange(X, "... seq (heads d) -> ... heads seq d", heads=self.num_heads)
+                for X in (Q, K, V)
+            )  # fmt: skip
 
-        if token_positions is None:
-            token_positions = einx.rearrange("seq -> b... seq", torch.arange(sequence_length, device=x.device), b=[1] * len(b))
+            if token_positions is None:
+                token_positions = einx.rearrange("seq -> b... seq", torch.arange(sequence_length, device=x.device), b=[1] * len(b))
 
-        # Duplicate token positions for each head
-        token_positions = rearrange(token_positions, "... seq -> ... 1 seq")
+            # Duplicate token positions for each head
+            token_positions = rearrange(token_positions, "... seq -> ... 1 seq")
 
-        Q = self.positional_encoder(Q, token_positions)
-        K = self.positional_encoder(K, token_positions)
+            with nvtx.range("RoPE_QK"):
+                Q = self.positional_encoder(Q, token_positions)
+                K = self.positional_encoder(K, token_positions)
 
-        # Construct causal mask
-        seq = torch.arange(sequence_length, device=x.device)
-        qi = einx.rearrange('query -> b... 1 query 1', seq, b=[1] * len(b))
-        kj = einx.rearrange('key   -> b... 1 1   key', seq, b=[1] * len(b))
-        causal_mask = qi >= kj  # (query, key)
+            # Construct causal mask
+            with nvtx.range("CausalMask"):
+                seq = torch.arange(sequence_length, device=x.device)
+                qi = einx.rearrange('query -> b... 1 query 1', seq, b=[1] * len(b))
+                kj = einx.rearrange('key   -> b... 1 1   key', seq, b=[1] * len(b))
+                causal_mask = qi >= kj  # (query, key)
 
-        # Shape: (..., num_heads, sequence_length, d_k)
-        attn_output = scaled_dot_product_attention(K=K, Q=Q, V=V, mask=causal_mask)
+            # Shape: (..., num_heads, sequence_length, d_k)
+            with nvtx.range("ScaledDotProduct"):
+                attn_output = scaled_dot_product_attention(K=K, Q=Q, V=V, mask=causal_mask)
 
-        # Concatenate the attention output from all heads.
-        # (..., sequence_length, num_heads * d_v).
-        attn_output = rearrange(attn_output, "batch heads seq d_v -> batch seq (heads d_v)").contiguous()
+            # Concatenate the attention output from all heads.
+            # (..., sequence_length, num_heads * d_v).
+            with nvtx.range("ConcatHeads"):
+                attn_output = rearrange(attn_output, "batch heads seq d_v -> batch seq (heads d_v)").contiguous()
 
-        # Apply the output projection
-        output = self.output_proj(attn_output)
-        return output
+            # Apply the output projection
+            with nvtx.range("OutputProjection"):
+                output = self.output_proj(attn_output)
+                return output
 
 def silu(x: torch.Tensor):
     return x * torch.sigmoid(x)
