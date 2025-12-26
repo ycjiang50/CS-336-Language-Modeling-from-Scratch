@@ -150,7 +150,7 @@ def benchmark_model(
 
 def main():
     # Load configuration
-    config_path = Path("configures/small.yaml")
+    config_path = Path("configures/xl.yaml")
     config = load_config(config_path)
     
     # Initialize model
