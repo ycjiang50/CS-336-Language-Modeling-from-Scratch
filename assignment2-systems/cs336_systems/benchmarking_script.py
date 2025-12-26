@@ -208,7 +208,7 @@ def main():
     )
     
     # Run benchmarkl save
-    for autocast in [False]:
+    for autocast in [True]:
         forward_time, backward_time, forward_memory, backward_memory = benchmark_model(
             model,
             batch,
