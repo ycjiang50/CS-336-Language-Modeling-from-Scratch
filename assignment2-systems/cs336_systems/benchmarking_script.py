@@ -79,10 +79,13 @@ def benchmark_model(
                     
                     if not forward_only:
                         with nvtx.range("warmup_backward"):
-                            optimizer.zero_grad()
-                            loss = outputs.mean()
-                            loss.backward()
-                            optimizer.step()
+                            with nvtx.range("warmup_zero_grad"):
+                                optimizer.zero_grad()
+                            with nvtx.range("warmup_loss_backward"):
+                                loss = outputs.mean()
+                                loss.backward()
+                            with nvtx.range("warmup_optimizer_step"):
+                                optimizer.step()
                     
                     if device == "cuda":
                         torch.cuda.synchronize()
@@ -109,17 +112,23 @@ def benchmark_model(
                         forward_times.append(forward_time)
                     
                     if not forward_only:
-                        # Backward pass - clearly marked for profiling
-                        with nvtx.range("BACKWARD"):
-                            start_time = timeit.default_timer()
+                        # Backward pass - split into gradient computation and optimizer
+                        start_time = timeit.default_timer()
+                        
+                        with nvtx.range("ZERO_GRAD"):
                             optimizer.zero_grad()
+                        
+                        with nvtx.range("BACKWARD"):
                             loss = outputs.mean()
                             loss.backward()
+                        
+                        with nvtx.range("OPTIMIZER_STEP"):
                             optimizer.step()
-                            if device == "cuda":
-                                torch.cuda.synchronize()
-                            backward_time = timeit.default_timer() - start_time
-                            backward_times.append(backward_time)
+                        
+                        if device == "cuda":
+                            torch.cuda.synchronize()
+                        backward_time = timeit.default_timer() - start_time
+                        backward_times.append(backward_time)
 
         # Memory measurement - separate NVTX region
         with nvtx.range("MEMORY_MEASUREMENT"):
@@ -133,10 +142,13 @@ def benchmark_model(
             if not forward_only:
                 torch.cuda.reset_peak_memory_stats()
                 with nvtx.range("memory_backward"):
-                    optimizer.zero_grad()
-                    loss = outputs.mean()
-                    loss.backward()
-                    optimizer.step()
+                    with nvtx.range("memory_zero_grad"):
+                        optimizer.zero_grad()
+                    with nvtx.range("memory_loss_backward"):
+                        loss = outputs.mean()
+                        loss.backward()
+                    with nvtx.range("memory_optimizer_step"):
+                        optimizer.step()
                     torch.cuda.synchronize()
                 memory_backward = torch.cuda.max_memory_allocated()/(1024**3)
     
