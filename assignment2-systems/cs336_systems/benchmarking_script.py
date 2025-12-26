@@ -13,8 +13,17 @@ from contextlib import nullcontext
 
 try:
     import torch.cuda.nvtx as nvtx
-except (ImportError, AttributeError):
+    NVTX_AVAILABLE = True
+    print("=" * 60)
+    print("✓ NVTX IS AVAILABLE in benchmarking script")
+    print("=" * 60)
+except (ImportError, AttributeError) as e:
     # If NVTX is not available, create a dummy context manager
+    NVTX_AVAILABLE = False
+    print("=" * 60)
+    print(f"✗ WARNING: NVTX NOT AVAILABLE (error: {e})")
+    print("  Profiling annotations will NOT appear in the profile!")
+    print("=" * 60)
     class DummyNVTX:
         @staticmethod
         def range(name):
