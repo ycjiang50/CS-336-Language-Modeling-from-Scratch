@@ -13,4 +13,4 @@ warmup_steps: 5
 benchmark_steps: 20
 forward_only: false
 device: "cuda" 
-autocast: false
+autocast: true
