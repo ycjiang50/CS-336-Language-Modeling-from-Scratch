@@ -15,8 +15,12 @@ from jaxtyping import Float, Bool, Int
 
 try:
     import torch.cuda.nvtx as nvtx
-except (ImportError, AttributeError):
+    _nvtx_available = True
+    print("✓ NVTX is AVAILABLE - profiling annotations will be active")
+except (ImportError, AttributeError) as e:
     # If NVTX is not available, create a dummy context manager
+    _nvtx_available = False
+    print(f"✗ NVTX is NOT available (error: {e}) - using dummy fallback, no profiling annotations!")
     class DummyNVTX:
         @staticmethod
         def range(name):
