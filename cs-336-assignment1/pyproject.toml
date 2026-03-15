@@ -21,6 +21,8 @@ dependencies = [
     "ty>=0.0.1a16",
     "scalene>=1.5.55",
     "transformers",
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.0",
 ]
 
 [build-system]
